@@ -8,6 +8,42 @@ import tempfile
 import time
 
 
+IAC = 0xFF
+CMD_WILL = 0xFB
+CMD_WONT = 0xFC
+CMD_DO = 0xFD
+CMD_DONT = 0xFE
+CMD_SB = 0xFA
+CMD_SE = 0xF0
+
+
+def strip_telnet(data: bytes) -> bytes:
+    out = bytearray()
+    i = 0
+    while i < len(data):
+        b = data[i]
+        if b != IAC:
+            out.append(b)
+            i += 1
+            continue
+        if i + 1 >= len(data):
+            break
+        cmd = data[i + 1]
+        if cmd == IAC:
+            out.append(IAC)
+            i += 2
+        elif cmd in (CMD_WILL, CMD_WONT, CMD_DO, CMD_DONT):
+            i += 3
+        elif cmd == CMD_SB:
+            end = data.find(bytes([IAC, CMD_SE]), i + 2)
+            if end == -1:
+                break
+            i = end + 2
+        else:
+            i += 2
+    return bytes(out)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--elf", required=True)
@@ -60,6 +96,39 @@ def main():
             buf = b""
             with sock:
                 sock.settimeout(1)
+                first = b""
+                while time.time() < deadline:
+                    try:
+                        first = sock.recv(4096)
+                    except socket.timeout:
+                        continue
+                    if first:
+                        break
+                if not first:
+                    print("FAIL: no data from Renode")
+                    return 1
+                neg = bytearray()
+                i = 0
+                while i < len(first):
+                    if first[i] != IAC:
+                        i += 1
+                        continue
+                    if i + 1 >= len(first):
+                        break
+                    cmd = first[i + 1]
+                    if cmd == CMD_WILL:
+                        opt = first[i + 2] if i + 2 < len(first) else 0
+                        neg.extend([IAC, CMD_DO, opt])
+                        i += 3
+                    elif cmd == CMD_DO:
+                        opt = first[i + 2] if i + 2 < len(first) else 0
+                        neg.extend([IAC, CMD_WILL, opt])
+                        i += 3
+                    else:
+                        i += 2
+                if neg:
+                    sock.sendall(bytes(neg))
+                buf = strip_telnet(first)
                 while time.time() < deadline:
                     try:
                         data = sock.recv(4096)
@@ -67,7 +136,7 @@ def main():
                         continue
                     if not data:
                         break
-                    buf += data
+                    buf += strip_telnet(data)
                     if args.expected.encode() in buf:
                         print("PASS: expected output found")
                         return 0
