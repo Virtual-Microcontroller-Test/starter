@@ -1,0 +1,52 @@
+name: build
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install ARM toolchain
+        uses: carlosperate/arm-none-eabi-gcc-action@v1
+        with:
+          release: '13.2.Rel1'
+
+      - name: Install Renode
+        run: |
+          curl -L -o renode.tar.gz https://github.com/renode/renode/releases/download/v1.15.3/renode-1.15.3.linux-portable-dotnet.tar.gz
+          tar -xzf renode.tar.gz
+          echo "$(pwd)/renode_1.15.3-dotnet_portable" >> "$GITHUB_PATH"
+
+      - name: Build
+        run: make
+
+      - name: Verify in Renode
+        run: make test
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-elf
+          path: app.elf
+
+      - name: Notify backend
+        if: env.WEBHOOK_URL != '' && always()
+        continue-on-error: true
+        env:
+          WEBHOOK_URL: ${{ secrets.BACKEND_WEBHOOK_URL }}
+          WEBHOOK_SECRET: ${{ secrets.BACKEND_WEBHOOK_SECRET }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          BRANCH: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+          STATUS: ${{ job.status }}
+        run: python3 .github/notify.py
