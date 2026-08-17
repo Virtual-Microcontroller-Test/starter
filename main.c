@@ -4,7 +4,7 @@ void uart_puts(const char *s);
 int main(void)
 {
     uart_init();
-    uart_puts("Hello world!\n");
+    uart_puts("Testing CI/CD");
 
     for (;;) { }
 }
